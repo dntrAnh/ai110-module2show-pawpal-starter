@@ -72,6 +72,7 @@ class Owner:
     """Represents the pet owner and their daily time budget."""
 
     def __init__(self, name: str, available_time_minutes: int) -> None:
+        """Initialize an owner with a name and their total daily care time in minutes."""
         self.name: str = name
         self.available_time_minutes: int = available_time_minutes
         self.pets: List[Pet] = []
@@ -103,6 +104,7 @@ class Scheduler:
     """
 
     def __init__(self, pet: Pet, time_budget_minutes: Optional[int] = None) -> None:
+        """Set up the scheduler for *pet*, using the supplied budget or the owner's budget."""
         self.pet: Pet = pet
         # Prefer the explicitly supplied budget; fall back to the owner's budget.
         if time_budget_minutes is not None:
@@ -180,6 +182,7 @@ class MermaidDiagram:
     """
 
     def __init__(self, title: str = "") -> None:
+        """Initialize an empty diagram with an optional title."""
         self.title: str = title
         self.classes: List[dict] = []
         self.relationships: List[str] = []

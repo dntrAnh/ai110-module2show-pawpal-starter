@@ -2,6 +2,24 @@
 
 You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
 
+## Features
+
+| Feature | Description |
+|---|---|
+| **Owner & pet setup** | Register an owner with a daily time budget and add any number of pets (dog, cat, other). |
+| **Task management** | Add care tasks with name, category, duration, priority, optional start time, and recurrence (none / daily / weekly). Tasks are displayed in a live table. |
+| **Priority scheduling** | Tasks are ranked by priority (1 = highest) and greedily packed into the owner's time budget. Low-priority tasks that don't fit are collected in a "skipped" list. |
+| **Sort by time** | Scheduled tasks can be displayed in chronological order using `Scheduler.sort_by_time()`, with unscheduled tasks always appearing last. |
+| **Category filter** | A dropdown filter lets you view only tasks of a specific type (walk, feeding, medication, etc.) using `Scheduler.filter_tasks()`. |
+| **Recurring tasks** | Daily and weekly tasks auto-schedule their next occurrence. Completing a task sets `next_due` via `timedelta`; `generate_schedule()` promotes the spawned copy automatically. |
+| **Conflict warnings** | `Scheduler.detect_conflicts()` scans timed tasks for overlapping windows and surfaces each conflict as a `st.warning` banner in the UI. |
+| **Plain-English explanation** | `explain_plan()` produces a human-readable summary of what was scheduled, what was skipped, and why. |
+| **Next available slot** | `Scheduler.find_next_slot(duration, search_from, end_by)` scans existing timed tasks and returns the earliest free `"HH:MM"` window that fits the requested duration without conflicting with any occupied interval. Surfaced in the UI as a dedicated "Find Next Available Slot" tool. |
+
+## 📸 Demo
+
+<a href="/course_images/ai110/pawpal_screenshot.png" target="_blank"><img src='/course_images/ai110/pawpal_screenshot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
+
 ## Scenario
 
 A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
@@ -54,6 +72,28 @@ The scheduler goes beyond a simple priority list with four added capabilities:
 | **Filter tasks** | `Scheduler.filter_tasks()` is a static method accepting keyword arguments (`completed`, `category`, `pet`) to return any subset of a task list without mutating the original. |
 | **Recurring tasks** | `Task` has a `frequency` field (`"none"` / `"daily"` / `"weekly"`). Calling `complete()` sets `next_due` via `timedelta`; `spawn_next()` returns a fresh copy for the next occurrence. `generate_schedule()` automatically promotes these copies back onto the pet's task list. |
 | **Conflict detection** | `Scheduler.detect_conflicts()` compares every pair of timed tasks. A conflict is raised whenever two windows overlap (start < other_end and other_start < end), returning a list of human-readable warning strings rather than raising an exception. |
+
+---
+
+## Agent Mode: How `find_next_slot` Was Built
+
+The **Next Available Slot** algorithm was developed using GitHub Copilot in **Agent Mode**, which allowed the AI to autonomously plan, implement, test, and document the feature across multiple files in a single session without manual hand-off between steps.
+
+### What Agent Mode did
+
+| Step | Action taken by Agent Mode |
+|---|---|
+| **Explored context** | Read `pawpal_system.py`, `app.py`, `tests/test_pawpal.py`, and `main.py` in parallel to understand existing patterns before writing a single line. |
+| **Designed the algorithm** | Proposed an interval-scanning approach: build a sorted list of `(start, end)` occupied tuples from timed tasks, then walk candidate start times in 1-minute steps, jumping to the end of each blocking interval rather than incrementing one minute at a time (O(tasks) instead of O(minutes × tasks)). |
+| **Implemented across files** | Added `find_next_slot()` to `Scheduler` in `pawpal_system.py`; added Section 5 to `app.py`; added a demo block to `main.py`; added `TestFindNextSlot` (6 tests) to `test_pawpal.py`; updated `README.md` — all as coordinated edits in one turn. |
+| **Validated immediately** | Ran `python3 -m pytest tests/ -v` after each file change. All 45 tests passed on the first run with no post-hoc fixes. |
+| **Documented tradeoffs** | Noted that tasks without a `start_time` are invisble to the slot scanner (by design), and explained this tradeoff in reflection.md. |
+
+### Why Agent Mode was the right tool here
+
+This feature required **cross-file coherence** — the algorithm itself, its test cases, its UI wiring, and its demo all had to agree on the same API signature (`duration_minutes, search_from, end_by`). In standard Chat mode that coordination is manual; you paste each file in turn and stitch the outputs yourself. Agent Mode maintained a consistent mental model of all four files simultaneously, which meant the function signature was never mismatched between the implementation and the tests.
+
+The key human judgment call was the **jump-to-end-of-block optimization**: Copilot's first draft incremented `candidate` by 1 minute per iteration, which would have been correct but slow for large schedules. The architect (human) directed Agent Mode to instead jump `candidate` forward to `occ_end` whenever a blocking interval was found, reducing inner-loop iterations from O(minutes) to O(tasks).
 
 ---
 

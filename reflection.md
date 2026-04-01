@@ -40,7 +40,7 @@ The system is built around five classes:
 
 - **`MermaidDiagram`** — a design/documentation utility, not a runtime component. It accumulates class definitions and relationship strings and can render them into a valid Mermaid `classDiagram` block, or export that block to a Markdown file.
 
-**Mermaid.js class diagram:**
+**Mermaid.js class diagram (final — updated to match implementation):**
 
 ```mermaid
 classDiagram
@@ -50,6 +50,7 @@ classDiagram
         +List~Pet~ pets
         +add_pet(pet: Pet)
         +get_available_time() int
+        +get_all_tasks() List~Task~
     }
 
     class Pet {
@@ -59,6 +60,7 @@ classDiagram
         +Owner owner
         +List~Task~ tasks
         +add_task(task: Task)
+        +remove_task(task_name: String)
         +get_tasks() List~Task~
     }
 
@@ -68,7 +70,11 @@ classDiagram
         +int duration_minutes
         +int priority
         +bool is_completed
+        +String frequency
+        +String start_time
+        +Date next_due
         +complete()
+        +spawn_next() Task
         +to_dict() dict
     }
 
@@ -79,6 +85,9 @@ classDiagram
         +List~Task~ unscheduled_tasks
         +generate_schedule() List~Task~
         +explain_plan() String
+        +sort_by_time(tasks) List~Task~
+        +filter_tasks(tasks, completed, category, pet)$ List~Task~
+        +detect_conflicts() List~String~
     }
 
     class MermaidDiagram {
@@ -95,6 +104,7 @@ classDiagram
     Owner "1" --> "1..*" Pet : owns
     Pet "1" --> "0..*" Task : has
     Scheduler --> Pet : schedules for
+    Task ..> Task : spawn_next()
     MermaidDiagram ..> Owner : models
     MermaidDiagram ..> Pet : models
     MermaidDiagram ..> Task : models
@@ -131,13 +141,16 @@ This is a reasonable tradeoff for this scenario: most users add rough start time
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+I used VS Code Copilot throughout every phase of this project. In the early stages it was most useful for **design brainstorming** — asking "what attributes and methods should a Task class have for a pet scheduler?" helped me quickly enumerate candidates that I could then trim or extend. During implementation the **inline completions** (Tab key) were fastest for boilerplate such as dataclass fields and `pytest` fixture definitions. The most powerful feature for this project was **Copilot Chat's `#file` context**: attaching `pawpal_system.py` directly in the prompt let me ask precise questions like "Based on this Scheduler class, what edge cases should my conflict detector handle?" and get answers grounded in my actual code rather than generic suggestions.
+
+The most helpful prompt patterns were:
+- **Concrete + constrained** — "Write a pytest test that verifies `sort_by_time()` returns tasks in chronological HH:MM order. Use only the classes already defined in `pawpal_system.py`." Vague prompts like "write tests" produced too many irrelevant fixtures.
+- **Explain then fix** — When a test failed I asked "Why is this test failing — is the bug in the test or in `generate_schedule()`?" before touching any code. Having Copilot reason first prevented me from chasing the wrong file.
+- **UML → code** — "Based on this Mermaid diagram, generate Python class stubs" was a reliable way to turn design artifacts into skeleton files without manually transcribing each attribute.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+When implementing `detect_conflicts()`, Copilot's first suggestion raised a Python `ValueError` exception when a conflict was found. I rejected this because exceptions are destructive in a UI context — a Streamlit app would crash and show an error screen rather than displaying a helpful warning message. I changed the design to return a `List[str]` of warning strings so the app can decide how to display them (in this case with `st.warning`). I verified the change by checking two properties: (1) the `main.py` demo printed the expected conflict strings without crashing, and (2) the `TestConflictDetection` tests confirmed the return type and message content.
 
 ---
 
@@ -145,13 +158,23 @@ This is a reasonable tradeoff for this scenario: most users add rough start time
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The 39-test suite covers five behavioral areas:
+
+1. **Task lifecycle** — creation, `complete()` idempotence, and `to_dict()` key completeness. These matter because every other feature depends on Task state being correct.
+2. **Pet task management** — add, remove, and count tasks. Removing a non-existent task must be safe (no exception), which guards against UI bugs where a user might double-click a delete button.
+3. **Scheduler greedy-fit** — tasks that fit within the time budget are scheduled; tasks that don't go to `unscheduled_tasks`. A zero-budget edge case ensures the scheduler never schedules anything when the owner has no time.
+4. **Sorting and filtering** — `sort_by_time()` returns chronological order and places tasks with no `start_time` last. `filter_tasks()` correctly partitions by completion status and category without mutating the original list.
+5. **Recurrence** — `complete()` sets `next_due` to the correct date for daily and weekly tasks. `spawn_next()` returns a fresh incomplete copy. `generate_schedule()` automatically adds the spawned copy to the pet's task list.
+6. **Conflict detection** — non-overlapping tasks produce no warnings; same start time and overlapping windows are each flagged; tasks with no `start_time` are correctly ignored.
+
+These behaviors were prioritized because they are the paths a real user will hit in normal app use. If any one of them were silently wrong the schedule output could be meaningless or misleading.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+★★★★☆ (4/5). I'm highly confident in the backend logic because every core algorithm (greedy scheduler, recurrenece, conflict detection) has multiple targeted tests including edge cases. The one gap is the Streamlit UI layer — form interactions, session-state resets, and multi-pet ordering are not yet covered by automated tests. Next edge cases I'd test:
+- An owner who has *no* pets registered — `get_all_tasks()` should return `[]` without error.
+- A recurring task that has already been spawned twice — `generate_schedule()` should not keep multiplying tasks infinitely.
+- Two tasks with identical priority but different durations — the relative order within the same priority level should be deterministic.
 
 ---
 
@@ -159,12 +182,12 @@ This is a reasonable tradeoff for this scenario: most users add rough start time
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The separation between the logic layer (`pawpal_system.py`) and the UI layer (`app.py`) worked extremely well. Because all scheduling intelligence lived in Python classes, I could test it entirely with `pytest` before touching Streamlit at all. This also meant that wiring the UI was mostly a matter of importing classes and calling methods — the UI code stayed thin and readable. The `@dataclass` choice for `Task` and `Pet` paid off significantly: frozen comparisons in tests, clean `__repr__` output for debugging, and free field-by-field equality checks all came for free.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+If I had another iteration I would redesign the recurring-task system to store occurrences separately from the pet's base task list rather than appending copies back into `pet.tasks`. The current approach means the task list grows every time `generate_schedule()` is called after a recurring task is completed, which could cause duplicates across multiple schedule generations. A cleaner model would be a `TaskTemplate` (the recurring definition) that produces `TaskInstance` objects for specific dates, keeping the source-of-truth list clean.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important lesson was that **AI accelerates production but not judgment**. Copilot could generate a working `detect_conflicts()` in seconds, but it couldn't decide whether conflicts should raise exceptions or return strings — that required me to think about the downstream UI contract and user experience. The same pattern repeated throughout: AI wrote the *how* quickly, but every decision about *what* the system should do in edge cases, and *why* a design was better than another, had to come from me. Being the "lead architect" means owning the specification, not just the keystrokes.

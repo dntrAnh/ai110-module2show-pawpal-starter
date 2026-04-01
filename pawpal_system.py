@@ -265,6 +265,82 @@ class Scheduler:
                     )
         return warnings
 
+    # ------------------------------------------------------------------
+    # Next available slot
+    # ------------------------------------------------------------------
+
+    def find_next_slot(
+        self,
+        duration_minutes: int,
+        search_from: str = "07:00",
+        end_by: str = "22:00",
+    ) -> Optional[str]:
+        """Find the earliest free time window that fits *duration_minutes*.
+
+        The algorithm builds a sorted list of occupied intervals from every
+        timed task in *scheduled_tasks*, then walks candidate start times in
+        1-minute steps from *search_from* until it finds a window of the
+        requested length that does not overlap any occupied interval, or until
+        *end_by* is reached.
+
+        Args:
+            duration_minutes: Length of the window to find, in minutes.
+            search_from: Earliest candidate start time in ``"HH:MM"`` format.
+                         Defaults to ``"07:00"``.
+            end_by: Latest time by which the window must *end*, in ``"HH:MM"``
+                    format.  Defaults to ``"22:00"``.
+
+        Returns:
+            The first available ``"HH:MM"`` start time as a string, or
+            ``None`` if no slot exists within the requested window.
+
+        Raises:
+            ValueError: If *duration_minutes* is less than 1, or if
+                        *search_from* / *end_by* are not valid ``"HH:MM"``
+                        strings.
+        """
+        if duration_minutes < 1:
+            raise ValueError("duration_minutes must be at least 1.")
+
+        def _mins(hhmm: str) -> int:
+            parts = hhmm.split(":")
+            if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                raise ValueError(f"Invalid time string: {hhmm!r}. Expected 'HH:MM'.")
+            return int(parts[0]) * 60 + int(parts[1])
+
+        start_bound = _mins(search_from)
+        end_bound   = _mins(end_by)
+
+        if start_bound + duration_minutes > end_bound:
+            return None
+
+        # Build sorted list of (start, end) occupied intervals from timed tasks
+        occupied: List[tuple] = sorted(
+            (_mins(t.start_time), _mins(t.start_time) + t.duration_minutes)
+            for t in self.scheduled_tasks
+            if t.start_time
+        )
+
+        candidate = start_bound
+        while candidate + duration_minutes <= end_bound:
+            candidate_end = candidate + duration_minutes
+            # Check if this candidate window overlaps any occupied interval
+            conflict = any(
+                candidate < occ_end and occ_start < candidate_end
+                for occ_start, occ_end in occupied
+            )
+            if not conflict:
+                return f"{candidate // 60:02d}:{candidate % 60:02d}"
+            # Jump to the end of the first overlapping interval to skip ahead
+            for occ_start, occ_end in occupied:
+                if candidate < occ_end and occ_start < candidate_end:
+                    candidate = occ_end
+                    break
+            else:
+                candidate += 1  # safety increment (should not normally be reached)
+
+        return None  # no free slot found within the window
+
     def explain_plan(self) -> str:
         """
         Return a human-readable explanation of why each task was included

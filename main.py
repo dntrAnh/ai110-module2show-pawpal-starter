@@ -1,6 +1,7 @@
 """
 main.py — PawPal+ demo script
-Demonstrates: scheduling, sort_by_time, filter_tasks, recurring tasks, conflict detection.
+Demonstrates: scheduling, sort_by_time, filter_tasks, recurring tasks,
+              conflict detection, find_next_slot.
 Run:  python3 main.py
 """
 
@@ -92,5 +93,26 @@ if conflicts:
         print(f"  {warning}")
 else:
     print("  No conflicts detected.")
+
+# ── 6. Find next available slot ────────────────────────────────────────────
+print("\n" + DIVIDER)
+print("6. FIND NEXT AVAILABLE SLOT (Mochi)")
+print(DIVIDER)
+slot_scheduler = Scheduler(mochi)
+slot_scheduler.generate_schedule()
+
+# Show the existing timed slots so we can reason about the answer
+timed = sorted(
+    [t for t in slot_scheduler.scheduled_tasks if t.start_time],
+    key=lambda t: t.start_time,
+)
+print("  Existing timed tasks:")
+for t in timed:
+    end_mins = int(t.start_time.split(":")[0]) * 60 + int(t.start_time.split(":")[1]) + t.duration_minutes
+    print(f"    {t.start_time}–{end_mins // 60:02d}:{end_mins % 60:02d}  {t.name}")
+
+for duration in (15, 30, 60):
+    slot = slot_scheduler.find_next_slot(duration, search_from="07:00", end_by="22:00")
+    print(f"  First free {duration}-min slot:  {slot if slot else 'none found'}")
 
 print("\n" + DIVIDER + "\n")

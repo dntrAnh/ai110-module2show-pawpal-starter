@@ -393,3 +393,81 @@ class TestFilterTasks:
         """Filtering an empty list should always return an empty list."""
         assert Scheduler.filter_tasks([], completed=False) == []
         assert Scheduler.filter_tasks([], category="walk") == []
+
+
+# ---------------------------------------------------------------------------
+# Next-available-slot tests
+# ---------------------------------------------------------------------------
+
+class TestFindNextSlot:
+    """Tests for Scheduler.find_next_slot() — the interval-scanning slot finder."""
+
+    def _scheduler_with_tasks(self, timed_tasks: list) -> "Scheduler":
+        """Helper: build a scheduler whose scheduled_tasks list contains *timed_tasks*."""
+        owner = Owner(name="Jordan", available_time_minutes=480)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        for t in timed_tasks:
+            pet.add_task(t)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        return scheduler
+
+    def test_empty_schedule_returns_search_from(self) -> None:
+        """With no existing tasks, the first slot should be search_from itself."""
+        owner = Owner(name="Jordan", available_time_minutes=480)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        result = scheduler.find_next_slot(30, search_from="08:00")
+        assert result == "08:00"
+
+    def test_slot_found_after_single_occupied_task(self) -> None:
+        """A 30-min slot should be found immediately after an existing 60-min task."""
+        task = Task(name="Walk", category="walk", duration_minutes=60, priority=1, start_time="08:00")
+        scheduler = self._scheduler_with_tasks([task])
+        # 08:00–09:00 is occupied; next slot for 30 min should start at 09:00
+        result = scheduler.find_next_slot(30, search_from="08:00")
+        assert result == "09:00"
+
+    def test_slot_found_in_gap_between_tasks(self) -> None:
+        """A gap between two tasks should be found when the requested size fits."""
+        t1 = Task(name="Breakfast", category="feeding",  duration_minutes=15, priority=1, start_time="07:00")
+        t2 = Task(name="Walk",      category="walk",     duration_minutes=30, priority=2, start_time="08:00")
+        scheduler = self._scheduler_with_tasks([t1, t2])
+        # Gap: 07:15–08:00 = 45 min free; a 30-min slot should start at 07:15
+        result = scheduler.find_next_slot(30, search_from="07:00")
+        assert result == "07:15"
+
+    def test_no_slot_when_day_fully_booked(self) -> None:
+        """find_next_slot() should return None when no window fits before end_by."""
+        # 08:00–10:00 (120 min) fills the 08:00–10:00 window used as end_by
+        task = Task(name="Long session", category="enrichment", duration_minutes=120, priority=1, start_time="08:00")
+        scheduler = self._scheduler_with_tasks([task])
+        # Only 2 hours available (08:00–10:00); request 30 min but end_by=10:00
+        # Even after the block ends at 10:00 there is no room because end_by == end of block
+        result = scheduler.find_next_slot(30, search_from="08:00", end_by="10:00")
+        assert result is None
+
+    def test_invalid_duration_raises_value_error(self) -> None:
+        """A duration of 0 or negative should raise ValueError."""
+        import pytest as _pytest
+        owner = Owner(name="Jordan", available_time_minutes=60)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        with _pytest.raises(ValueError):
+            scheduler.find_next_slot(0)
+
+    def test_slot_respects_end_by_boundary(self) -> None:
+        """A slot that would run past end_by should not be returned."""
+        owner = Owner(name="Jordan", available_time_minutes=60)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        # 60-min slot starting at 21:30 would end at 22:30, past end_by=22:00
+        result = scheduler.find_next_slot(60, search_from="21:30", end_by="22:00")
+        assert result is None

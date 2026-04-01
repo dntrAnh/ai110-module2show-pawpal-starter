@@ -184,3 +184,212 @@ class TestScheduler:
         scheduler = Scheduler(sample_pet, time_budget_minutes=60)
         result = scheduler.explain_plan()
         assert "generate_schedule" in result
+
+    def test_pet_with_no_tasks_generates_empty_schedule(self, sample_pet: Pet) -> None:
+        """A pet with zero tasks should yield an empty scheduled and unscheduled list."""
+        owner = Owner(name="Jordan", available_time_minutes=60)
+        owner.add_pet(sample_pet)
+        scheduler = Scheduler(sample_pet)
+        scheduled = scheduler.generate_schedule()
+        assert scheduled == []
+        assert scheduler.unscheduled_tasks == []
+
+    def test_zero_budget_schedules_nothing(self, sample_pet: Pet) -> None:
+        """When the time budget is 0, all tasks should land in unscheduled_tasks."""
+        sample_pet.add_task(Task(name="Walk", category="walk", duration_minutes=10, priority=1))
+        scheduler = Scheduler(sample_pet, time_budget_minutes=0)
+        scheduler.generate_schedule()
+        assert scheduler.scheduled_tasks == []
+        assert len(scheduler.unscheduled_tasks) == 1
+
+
+# ---------------------------------------------------------------------------
+# Sorting tests
+# ---------------------------------------------------------------------------
+
+class TestSorting:
+    def test_sort_by_time_returns_chronological_order(self) -> None:
+        """sort_by_time() should return tasks ordered earliest start_time first."""
+        owner = Owner(name="Jordan", available_time_minutes=120)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        late_task  = Task(name="Evening walk", category="walk",    duration_minutes=20, priority=1, start_time="18:00")
+        early_task = Task(name="Breakfast",    category="feeding", duration_minutes=10, priority=2, start_time="07:30")
+        mid_task   = Task(name="Meds",         category="medication", duration_minutes=5, priority=3, start_time="12:00")
+        pet.add_task(late_task)
+        pet.add_task(early_task)
+        pet.add_task(mid_task)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        sorted_tasks = scheduler.sort_by_time()
+        assert sorted_tasks[0].start_time == "07:30"
+        assert sorted_tasks[1].start_time == "12:00"
+        assert sorted_tasks[2].start_time == "18:00"
+
+    def test_sort_by_time_unscheduled_tasks_go_last(self) -> None:
+        """Tasks without a start_time should appear after all timed tasks."""
+        owner = Owner(name="Jordan", available_time_minutes=120)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        timed_task     = Task(name="Walk",  category="walk",    duration_minutes=20, priority=1, start_time="08:00")
+        no_time_task   = Task(name="Groom", category="grooming", duration_minutes=30, priority=2)
+        pet.add_task(timed_task)
+        pet.add_task(no_time_task)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        sorted_tasks = scheduler.sort_by_time()
+        assert sorted_tasks[0].start_time == "08:00"
+        assert sorted_tasks[-1].start_time == ""
+
+    def test_sort_by_time_with_empty_list(self) -> None:
+        """sort_by_time() on an empty list should return an empty list."""
+        owner = Owner(name="Jordan", available_time_minutes=60)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        assert scheduler.sort_by_time([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Recurrence tests
+# ---------------------------------------------------------------------------
+
+class TestRecurrence:
+    def test_daily_task_complete_sets_next_due_to_tomorrow(self) -> None:
+        """Completing a daily task should set next_due to today + 1 day."""
+        from datetime import date, timedelta
+        task = Task(name="Feed", category="feeding", duration_minutes=5, priority=1, frequency="daily")
+        task.complete()
+        assert task.next_due == date.today() + timedelta(days=1)
+
+    def test_weekly_task_complete_sets_next_due_to_next_week(self) -> None:
+        """Completing a weekly task should set next_due to today + 7 days."""
+        from datetime import date, timedelta
+        task = Task(name="Bath", category="grooming", duration_minutes=30, priority=2, frequency="weekly")
+        task.complete()
+        assert task.next_due == date.today() + timedelta(weeks=1)
+
+    def test_non_recurring_task_next_due_stays_none(self) -> None:
+        """Completing a non-recurring task should leave next_due as None."""
+        task = Task(name="Vet visit", category="medication", duration_minutes=60, priority=1, frequency="none")
+        task.complete()
+        assert task.next_due is None
+
+    def test_spawn_next_returns_fresh_incomplete_copy(self) -> None:
+        """spawn_next() should return a new Task with is_completed=False."""
+        from datetime import date, timedelta
+        task = Task(name="Feed", category="feeding", duration_minutes=5, priority=1, frequency="daily")
+        task.complete()
+        next_task = task.spawn_next()
+        assert next_task is not None
+        assert next_task.is_completed is False
+        assert next_task.name == "Feed"
+
+    def test_spawn_next_on_non_recurring_returns_none(self) -> None:
+        """spawn_next() on a non-recurring task should return None."""
+        task = Task(name="Vet visit", category="medication", duration_minutes=60, priority=1, frequency="none")
+        task.complete()
+        assert task.spawn_next() is None
+
+    def test_generate_schedule_auto_spawns_recurring_task(self) -> None:
+        """generate_schedule() should add a new occurrence for a completed recurring task."""
+        owner = Owner(name="Jordan", available_time_minutes=120)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        task = Task(name="Feed", category="feeding", duration_minutes=5, priority=1, frequency="daily")
+        task.complete()          # mark done — should trigger spawn on next generate_schedule
+        pet.add_task(task)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        # The spawned next occurrence should now be in the pet's task list
+        names = [t.name for t in pet.get_tasks()]
+        assert names.count("Feed") == 2  # original (completed) + spawned next
+
+
+# ---------------------------------------------------------------------------
+# Conflict detection tests
+# ---------------------------------------------------------------------------
+
+class TestConflictDetection:
+    def _make_scheduled_scheduler(self, pet: Pet, tasks: list) -> "Scheduler":
+        """Helper: inject tasks directly into scheduled_tasks (bypassing budget logic)."""
+        owner = Owner(name="Jordan", available_time_minutes=300)
+        owner.add_pet(pet)
+        for t in tasks:
+            pet.add_task(t)
+        scheduler = Scheduler(pet)
+        scheduler.generate_schedule()
+        return scheduler
+
+    def test_no_conflicts_for_non_overlapping_tasks(self) -> None:
+        """Two tasks with non-overlapping windows should produce no conflict warnings."""
+        pet = Pet(name="Mochi", species="dog", age=3)
+        morning = Task(name="Walk",  category="walk",    duration_minutes=20, priority=1, start_time="07:00")
+        noon    = Task(name="Feed",  category="feeding", duration_minutes=10, priority=2, start_time="12:00")
+        scheduler = self._make_scheduled_scheduler(pet, [morning, noon])
+        assert scheduler.detect_conflicts() == []
+
+    def test_conflict_detected_for_same_start_time(self) -> None:
+        """Two tasks starting at the exact same time should be flagged as a conflict."""
+        pet = Pet(name="Mochi", species="dog", age=3)
+        task_a = Task(name="Walk",  category="walk",    duration_minutes=20, priority=1, start_time="08:00")
+        task_b = Task(name="Train", category="walk",    duration_minutes=15, priority=2, start_time="08:00")
+        scheduler = self._make_scheduled_scheduler(pet, [task_a, task_b])
+        conflicts = scheduler.detect_conflicts()
+        assert len(conflicts) >= 1
+        assert any("Walk" in c and "Train" in c for c in conflicts)
+
+    def test_conflict_detected_for_overlapping_windows(self) -> None:
+        """A task starting before another ends should be flagged as a conflict."""
+        pet = Pet(name="Mochi", species="dog", age=3)
+        # Walk starts 18:00, lasts 30 min → ends 18:30
+        # Training starts 18:10 → inside the Walk window
+        walk     = Task(name="Evening walk", category="walk", duration_minutes=30, priority=1, start_time="18:00")
+        training = Task(name="Training",     category="walk", duration_minutes=20, priority=2, start_time="18:10")
+        scheduler = self._make_scheduled_scheduler(pet, [walk, training])
+        conflicts = scheduler.detect_conflicts()
+        assert len(conflicts) >= 1
+
+    def test_tasks_without_start_time_skipped_in_conflict_detection(self) -> None:
+        """Tasks with no start_time should never be included in conflict detection."""
+        pet = Pet(name="Mochi", species="dog", age=3)
+        task_a = Task(name="Walk",  category="walk",    duration_minutes=20, priority=1)  # no start_time
+        task_b = Task(name="Groom", category="grooming", duration_minutes=20, priority=2)  # no start_time
+        scheduler = self._make_scheduled_scheduler(pet, [task_a, task_b])
+        assert scheduler.detect_conflicts() == []
+
+
+# ---------------------------------------------------------------------------
+# Filter tests
+# ---------------------------------------------------------------------------
+
+class TestFilterTasks:
+    def test_filter_by_completed_true_returns_only_done_tasks(self) -> None:
+        """filter_tasks(completed=True) should return only completed tasks."""
+        done   = Task(name="Walk",  category="walk",    duration_minutes=20, priority=1, is_completed=True)
+        pending = Task(name="Feed", category="feeding", duration_minutes=10, priority=2)
+        result = Scheduler.filter_tasks([done, pending], completed=True)
+        assert len(result) == 1
+        assert result[0].name == "Walk"
+
+    def test_filter_by_completed_false_returns_only_pending(self) -> None:
+        """filter_tasks(completed=False) should return only incomplete tasks."""
+        done    = Task(name="Walk", category="walk",    duration_minutes=20, priority=1, is_completed=True)
+        pending = Task(name="Feed", category="feeding", duration_minutes=10, priority=2)
+        result = Scheduler.filter_tasks([done, pending], completed=False)
+        assert len(result) == 1
+        assert result[0].name == "Feed"
+
+    def test_filter_by_category(self) -> None:
+        """filter_tasks(category='walk') should return only tasks in that category."""
+        walk_task = Task(name="Walk", category="walk",    duration_minutes=20, priority=1)
+        feed_task = Task(name="Feed", category="feeding", duration_minutes=10, priority=2)
+        result = Scheduler.filter_tasks([walk_task, feed_task], category="walk")
+        assert len(result) == 1
+        assert result[0].category == "walk"
+
+    def test_filter_empty_list_returns_empty(self) -> None:
+        """Filtering an empty list should always return an empty list."""
+        assert Scheduler.filter_tasks([], completed=False) == []
+        assert Scheduler.filter_tasks([], category="walk") == []

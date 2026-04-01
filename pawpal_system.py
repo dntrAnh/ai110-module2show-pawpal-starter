@@ -24,11 +24,17 @@ class Task:
 
     def complete(self) -> None:
         """Mark this task as completed."""
-        pass  # TODO: implement
+        self.is_completed = True
 
     def to_dict(self) -> dict:
         """Return a plain-dictionary representation of the task."""
-        pass  # TODO: implement
+        return {
+            "name": self.name,
+            "category": self.category,
+            "duration_minutes": self.duration_minutes,
+            "priority": self.priority,
+            "is_completed": self.is_completed,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -47,15 +53,15 @@ class Pet:
 
     def add_task(self, task: Task) -> None:
         """Add a care task to this pet's task list."""
-        pass  # TODO: implement
+        self.tasks.append(task)
 
     def remove_task(self, task_name: str) -> None:
         """Remove a task by name from this pet's task list."""
-        pass  # TODO: implement
+        self.tasks = [t for t in self.tasks if t.name != task_name]
 
     def get_tasks(self) -> List[Task]:
         """Return all tasks assigned to this pet."""
-        pass  # TODO: implement
+        return list(self.tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -72,11 +78,16 @@ class Owner:
 
     def add_pet(self, pet: Pet) -> None:
         """Register a pet under this owner and back-link it."""
-        pass  # TODO: implement
+        pet.owner = self
+        self.pets.append(pet)
 
     def get_available_time(self) -> int:
         """Return the owner's total daily time budget in minutes."""
-        pass  # TODO: implement
+        return self.available_time_minutes
+
+    def get_all_tasks(self) -> List[Task]:
+        """Return every task across all of this owner's pets."""
+        return [task for pet in self.pets for task in pet.get_tasks()]
 
 
 # ---------------------------------------------------------------------------
@@ -105,17 +116,51 @@ class Scheduler:
 
     def generate_schedule(self) -> List[Task]:
         """
-        Sort tasks by priority, fit as many as possible within the time budget,
-        and return the scheduled list.
+        Sort tasks by priority (lower number = higher priority), fit as many as
+        possible within the time budget, and populate scheduled_tasks and
+        unscheduled_tasks.
         """
-        pass  # TODO: implement
+        self.scheduled_tasks = []
+        self.unscheduled_tasks = []
+        remaining = self.time_budget_minutes
+        sorted_tasks = sorted(self.pet.get_tasks(), key=lambda t: t.priority)
+        for task in sorted_tasks:
+            if task.duration_minutes <= remaining:
+                self.scheduled_tasks.append(task)
+                remaining -= task.duration_minutes
+            else:
+                self.unscheduled_tasks.append(task)
+        return list(self.scheduled_tasks)
 
     def explain_plan(self) -> str:
         """
         Return a human-readable explanation of why each task was included
         or excluded from the generated schedule.
         """
-        pass  # TODO: implement
+        if not self.scheduled_tasks and not self.unscheduled_tasks:
+            return "No schedule generated yet. Call generate_schedule() first."
+
+        lines: List[str] = []
+        total = sum(t.duration_minutes for t in self.scheduled_tasks)
+        lines.append(
+            f"Time budget: {self.time_budget_minutes} min  |  "
+            f"Used: {total} min  |  "
+            f"Remaining: {self.time_budget_minutes - total} min"
+        )
+        lines.append("")
+        lines.append("Scheduled tasks:")
+        for task in self.scheduled_tasks:
+            lines.append(
+                f"  ✓ [{task.priority}] {task.name} ({task.category}) — {task.duration_minutes} min"
+            )
+        if self.unscheduled_tasks:
+            lines.append("")
+            lines.append("Skipped (not enough time):")
+            for task in self.unscheduled_tasks:
+                lines.append(
+                    f"  ✗ [{task.priority}] {task.name} ({task.category}) — {task.duration_minutes} min"
+                )
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -145,16 +190,30 @@ class MermaidDiagram:
         Add a class definition dict to the diagram.
         Expected keys: 'name', 'attributes' (list of str), 'methods' (list of str).
         """
-        pass  # TODO: implement
+        self.classes.append(cls)
 
     def add_relationship(self, rel: str) -> None:
         """Add a relationship line (raw Mermaid syntax) to the diagram."""
-        pass  # TODO: implement
+        self.relationships.append(rel)
 
     def render(self) -> str:
         """Compile all classes and relationships into a Mermaid classDiagram string."""
-        pass  # TODO: implement
+        lines = ["classDiagram"]
+        for cls in self.classes:
+            lines.append(f"    class {cls['name']} {{")
+            for attr in cls.get("attributes", []):
+                lines.append(f"        {attr}")
+            for method in cls.get("methods", []):
+                lines.append(f"        {method}")
+            lines.append("    }")
+            lines.append("")
+        for rel in self.relationships:
+            lines.append(f"    {rel}")
+        self.diagram_text = "\n".join(lines)
+        return self.diagram_text
 
     def export(self, filepath: str) -> None:
         """Write the rendered diagram wrapped in a Markdown code-fence to a file."""
-        pass  # TODO: implement
+        content = f"```mermaid\n{self.render()}\n```\n"
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)

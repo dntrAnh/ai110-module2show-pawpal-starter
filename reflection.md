@@ -115,13 +115,15 @@ After reviewing the skeleton, two problems were identified and fixed:
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers three constraints: (1) **total daily time** — the owner's `available_time_minutes` caps how many tasks can fit; (2) **priority** — tasks are sorted by their 1-based priority number so high-importance care (e.g., medication, walks) is always scheduled first; and (3) **completion status** — already-completed tasks are excluded from the current day's plan.
+
+Priority was chosen as the primary sort key because pet health tasks (medication, feeding) are non-negotiable and must not be displaced by optional enrichment regardless of duration.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+The conflict detector flags overlaps by comparing `start_time` + `duration_minutes` windows, but only for tasks that have an explicit `start_time` set. Tasks without a start time are silently skipped during conflict detection.
+
+This is a reasonable tradeoff for this scenario: most users add rough start times for time-sensitive tasks (medication, walks) and leave discretionary tasks unscheduled. Requiring every task to have a time would create unnecessary friction. The tradeoff is that two unscheduled tasks could theoretically be placed back-to-back in a way that overruns the day — but the budget-based greedy scheduler already prevents that at the minute level. Exact-overlap detection (not just exact-time-match) is used, so 07:30 + 10 min correctly conflicts with 07:35, as shown in the demo.
 
 ---
 

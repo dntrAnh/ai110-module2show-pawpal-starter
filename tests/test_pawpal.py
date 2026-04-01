@@ -52,9 +52,12 @@ class TestTask:
         assert sample_task.is_completed is True
 
     def test_to_dict_contains_all_fields(self, sample_task: Task) -> None:
-        """to_dict() should include all five expected keys."""
+        """to_dict() should include all expected keys."""
         d = sample_task.to_dict()
-        assert set(d.keys()) == {"name", "category", "duration_minutes", "priority", "is_completed"}
+        assert set(d.keys()) == {
+            "name", "category", "duration_minutes", "priority",
+            "is_completed", "frequency", "start_time", "next_due",
+        }
 
     def test_to_dict_reflects_current_state(self, sample_task: Task) -> None:
         """to_dict() values should match the task's current attributes."""

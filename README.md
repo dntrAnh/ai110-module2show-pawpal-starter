@@ -41,3 +41,16 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+---
+
+## Smarter Scheduling
+
+The scheduler goes beyond a simple priority list with four added capabilities:
+
+| Feature | How it works |
+|---|---|
+| **Sort by time** | `Scheduler.sort_by_time()` orders scheduled tasks chronologically using a lambda key on `"HH:MM"` strings; tasks without a start time appear last. |
+| **Filter tasks** | `Scheduler.filter_tasks()` is a static method accepting keyword arguments (`completed`, `category`, `pet`) to return any subset of a task list without mutating the original. |
+| **Recurring tasks** | `Task` has a `frequency` field (`"none"` / `"daily"` / `"weekly"`). Calling `complete()` sets `next_due` via `timedelta`; `spawn_next()` returns a fresh copy for the next occurrence. `generate_schedule()` automatically promotes these copies back onto the pet's task list. |
+| **Conflict detection** | `Scheduler.detect_conflicts()` compares every pair of timed tasks. A conflict is raised whenever two windows overlap (start < other_end and other_start < end), returning a list of human-readable warning strings rather than raising an exception. |

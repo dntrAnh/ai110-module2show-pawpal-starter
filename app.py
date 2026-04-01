@@ -5,14 +5,46 @@ st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
 
+DATA_FILE = "data.json"
+
 # ---------------------------------------------------------------------------
 # Session-state bootstrap
-# st.session_state persists data across reruns for the lifetime of the browser
-# tab. We only create the Owner once; subsequent reruns reuse the same object.
+# On first load, try to restore from the saved JSON file so pets and tasks
+# survive page refreshes and server restarts.
 # ---------------------------------------------------------------------------
 
 if "owner" not in st.session_state:
-    st.session_state.owner = None          # set after the owner form is submitted
+    try:
+        st.session_state.owner = Owner.load_from_json(DATA_FILE)
+    except ValueError as _load_err:
+        st.session_state.owner = None
+        st.warning(f"Could not load saved data: {_load_err}")
+
+
+def _save() -> None:
+    """Persist the current owner state to disk (no-op if no owner yet)."""
+    if st.session_state.owner is not None:
+        st.session_state.owner.save_to_json(DATA_FILE)
+
+# ---------------------------------------------------------------------------
+# Sidebar: persistence controls
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("💾 Data")
+    if st.session_state.owner is not None:
+        if st.button("Save to disk", use_container_width=True):
+            _save()
+            st.success(f"Saved to `{DATA_FILE}`")
+        st.caption(f"Auto-saves after every change to `{DATA_FILE}`.")
+        st.divider()
+        if st.button("🗑️ Reset all data", use_container_width=True, type="secondary"):
+            import os as _os
+            if _os.path.exists(DATA_FILE):
+                _os.remove(DATA_FILE)
+            st.session_state.owner = None
+            st.rerun()
+    else:
+        st.info("No data saved yet.")
 
 # ---------------------------------------------------------------------------
 # Section 1: Owner setup
@@ -37,6 +69,7 @@ if submitted_owner:
     else:
         existing.available_time_minutes = available_minutes
     st.success(f"Owner **{owner_name}** saved with {available_minutes} min/day.")
+    _save()
 
 owner: Owner | None = st.session_state.owner
 if owner is None:
@@ -71,6 +104,7 @@ if submitted_pet:
         new_pet = Pet(name=pet_name, species=species, age=age)
         owner.add_pet(new_pet)          # sets new_pet.owner = owner automatically
         st.success(f"Added **{pet_name}** the {species}!")
+        _save()
 
 if owner.pets:
     st.write("Your pets:")
@@ -137,6 +171,7 @@ else:
                 + (f" · starts {st_clean}" if st_clean else "")
                 + "."
             )
+            _save()
 
     # Show all tasks across all pets
     all_rows = []

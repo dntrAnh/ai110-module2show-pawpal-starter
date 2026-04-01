@@ -4,6 +4,8 @@ All backend classes for the pet care scheduling system.
 """
 
 from __future__ import annotations
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import List, Optional
@@ -64,6 +66,21 @@ class Task:
             "next_due": self.next_due.isoformat() if self.next_due else None,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        """Reconstruct a Task from a dictionary produced by to_dict()."""
+        next_due_raw = data.get("next_due")
+        return cls(
+            name=data["name"],
+            category=data["category"],
+            duration_minutes=data["duration_minutes"],
+            priority=data["priority"],
+            is_completed=data.get("is_completed", False),
+            frequency=data.get("frequency", "none"),
+            start_time=data.get("start_time", ""),
+            next_due=date.fromisoformat(next_due_raw) if next_due_raw else None,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Pet
@@ -91,6 +108,27 @@ class Pet:
         """Return all tasks assigned to this pet."""
         return list(self.tasks)
 
+    def to_dict(self) -> dict:
+        """Return a serialisable dictionary for this pet (owner back-link excluded)."""
+        return {
+            "name": self.name,
+            "species": self.species,
+            "age": self.age,
+            "tasks": [t.to_dict() for t in self.tasks],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Pet":
+        """Reconstruct a Pet (without owner back-link) from a dictionary."""
+        pet = cls(
+            name=data["name"],
+            species=data["species"],
+            age=data["age"],
+        )
+        for task_data in data.get("tasks", []):
+            pet.add_task(Task.from_dict(task_data))
+        return pet
+
 
 # ---------------------------------------------------------------------------
 # Owner
@@ -117,6 +155,70 @@ class Owner:
     def get_all_tasks(self) -> List[Task]:
         """Return every task across all of this owner's pets."""
         return [task for pet in self.pets for task in pet.get_tasks()]
+
+    def to_dict(self) -> dict:
+        """Return a fully serialisable dictionary of this owner and all their pets."""
+        return {
+            "name": self.name,
+            "available_time_minutes": self.available_time_minutes,
+            "pets": [p.to_dict() for p in self.pets],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Owner":
+        """Reconstruct an Owner (and all nested Pets/Tasks) from a dictionary."""
+        owner = cls(
+            name=data["name"],
+            available_time_minutes=data["available_time_minutes"],
+        )
+        for pet_data in data.get("pets", []):
+            owner.add_pet(Pet.from_dict(pet_data))  # sets pet.owner back-link
+        return owner
+
+    def save_to_json(self, filepath: str = "data.json") -> None:
+        """Serialise the owner (plus all pets and tasks) to a JSON file.
+
+        The file is written atomically: data is first written to a temporary
+        sibling file, then renamed over the target path so a crash mid-write
+        never leaves a corrupt or empty file.
+
+        Args:
+            filepath: Destination path.  Defaults to ``"data.json"`` in the
+                      current working directory.
+        """
+        tmp = filepath + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.to_dict(), fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, filepath)  # atomic on POSIX; best-effort on Windows
+
+    @classmethod
+    def load_from_json(cls, filepath: str = "data.json") -> Optional["Owner"]:
+        """Load and reconstruct an Owner from a previously saved JSON file.
+
+        Returns ``None`` (rather than raising) when the file does not exist so
+        callers can treat a missing file as "first run" without try/except.
+
+        Args:
+            filepath: Path to the JSON file.  Defaults to ``"data.json"``.
+
+        Returns:
+            A fully hydrated :class:`Owner` instance, or ``None`` if the file
+            was not found.
+
+        Raises:
+            ValueError: If the file exists but cannot be parsed as valid JSON
+                        or is missing required keys.
+        """
+        if not os.path.exists(filepath):
+            return None
+        with open(filepath, "r", encoding="utf-8") as fh:
+            try:
+                data = json.load(fh)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Could not parse {filepath!r} as JSON: {exc}"
+                ) from exc
+        return cls.from_dict(data)
 
 
 # ---------------------------------------------------------------------------

@@ -471,3 +471,100 @@ class TestFindNextSlot:
         # 60-min slot starting at 21:30 would end at 22:30, past end_by=22:00
         result = scheduler.find_next_slot(60, search_from="21:30", end_by="22:00")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Persistence tests
+# ---------------------------------------------------------------------------
+
+class TestPersistence:
+    """Tests for Owner.save_to_json() and Owner.load_from_json()."""
+
+    def _build_owner(self) -> Owner:
+        """Helper: create a populated Owner with one pet and two tasks."""
+        from datetime import date
+        owner = Owner(name="Jordan", available_time_minutes=90)
+        pet = Pet(name="Mochi", species="dog", age=3)
+        owner.add_pet(pet)
+        pet.add_task(Task(name="Walk", category="walk", duration_minutes=20, priority=1, start_time="07:00"))
+        recurring = Task(name="Feed", category="feeding", duration_minutes=5, priority=2, frequency="daily")
+        recurring.complete()  # sets next_due
+        pet.add_task(recurring)
+        return owner
+
+    def test_round_trip_preserves_owner_fields(self, tmp_path) -> None:
+        """Saving and reloading should preserve owner name and time budget."""
+        filepath = str(tmp_path / "data.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        assert loaded is not None
+        assert loaded.name == "Jordan"
+        assert loaded.available_time_minutes == 90
+
+    def test_round_trip_preserves_pets(self, tmp_path) -> None:
+        """Saving and reloading should preserve pet count and attributes."""
+        filepath = str(tmp_path / "data.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        assert len(loaded.pets) == 1
+        assert loaded.pets[0].name == "Mochi"
+        assert loaded.pets[0].species == "dog"
+        assert loaded.pets[0].age == 3
+
+    def test_round_trip_preserves_tasks(self, tmp_path) -> None:
+        """Saving and reloading should preserve task details."""
+        filepath = str(tmp_path / "data.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        tasks = loaded.pets[0].get_tasks()
+        assert len(tasks) == 2
+        walk = next(t for t in tasks if t.name == "Walk")
+        assert walk.category == "walk"
+        assert walk.duration_minutes == 20
+        assert walk.start_time == "07:00"
+
+    def test_round_trip_preserves_recurring_next_due(self, tmp_path) -> None:
+        """next_due dates should survive JSON serialisation and deserialisation."""
+        from datetime import date, timedelta
+        filepath = str(tmp_path / "data.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        feed = next(t for t in loaded.pets[0].get_tasks() if t.name == "Feed")
+        assert feed.is_completed is True
+        assert feed.next_due == date.today() + timedelta(days=1)
+
+    def test_round_trip_restores_owner_back_link(self, tmp_path) -> None:
+        """After loading, each pet's owner attribute should point to the loaded Owner."""
+        filepath = str(tmp_path / "data.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        assert loaded.pets[0].owner is loaded
+
+    def test_load_returns_none_for_missing_file(self, tmp_path) -> None:
+        """load_from_json() should return None when the file does not exist."""
+        result = Owner.load_from_json(str(tmp_path / "nonexistent.json"))
+        assert result is None
+
+    def test_load_raises_on_invalid_json(self, tmp_path) -> None:
+        """load_from_json() should raise ValueError for corrupt JSON content."""
+        import pytest as _pytest
+        bad_file = tmp_path / "bad.json"
+        bad_file.write_text("{not valid json}", encoding="utf-8")
+        with _pytest.raises(ValueError, match="Could not parse"):
+            Owner.load_from_json(str(bad_file))
+
+    def test_save_is_atomic_on_missing_directory_entry(self, tmp_path) -> None:
+        """save_to_json() should write a readable JSON file."""
+        import json as _json
+        filepath = str(tmp_path / "output.json")
+        owner = self._build_owner()
+        owner.save_to_json(filepath)
+        with open(filepath, encoding="utf-8") as fh:
+            data = _json.load(fh)
+        assert data["name"] == "Jordan"
+        assert len(data["pets"]) == 1

@@ -15,6 +15,7 @@ You are building **PawPal+**, a Streamlit app that helps a pet owner plan care t
 | **Conflict warnings** | `Scheduler.detect_conflicts()` scans timed tasks for overlapping windows and surfaces each conflict as a `st.warning` banner in the UI. |
 | **Plain-English explanation** | `explain_plan()` produces a human-readable summary of what was scheduled, what was skipped, and why. |
 | **Next available slot** | `Scheduler.find_next_slot(duration, search_from, end_by)` scans existing timed tasks and returns the earliest free `"HH:MM"` window that fits the requested duration without conflicting with any occupied interval. Surfaced in the UI as a dedicated "Find Next Available Slot" tool. |
+| **Data persistence** | `Owner.save_to_json(filepath)` serialises the full owner → pets → tasks graph to a JSON file using an atomic write (`tmp` → `os.replace()`). `Owner.load_from_json(filepath)` deserialises it back, restoring every `next_due` date and the `pet.owner` back-link. The Streamlit app auto-loads `data.json` on startup and auto-saves after every mutation. |
 
 ## 📸 Demo
 
@@ -72,6 +73,7 @@ The scheduler goes beyond a simple priority list with four added capabilities:
 | **Filter tasks** | `Scheduler.filter_tasks()` is a static method accepting keyword arguments (`completed`, `category`, `pet`) to return any subset of a task list without mutating the original. |
 | **Recurring tasks** | `Task` has a `frequency` field (`"none"` / `"daily"` / `"weekly"`). Calling `complete()` sets `next_due` via `timedelta`; `spawn_next()` returns a fresh copy for the next occurrence. `generate_schedule()` automatically promotes these copies back onto the pet's task list. |
 | **Conflict detection** | `Scheduler.detect_conflicts()` compares every pair of timed tasks. A conflict is raised whenever two windows overlap (start < other_end and other_start < end), returning a list of human-readable warning strings rather than raising an exception. |
+| **JSON persistence** | `Owner.to_dict()` / `Owner.from_dict()` / `Pet.to_dict()` / `Pet.from_dict()` / `Task.from_dict()` implement a full serialisation round-trip. `save_to_json()` writes atomically via a `.tmp` file and `os.replace()` to prevent partial writes on crash. `load_from_json()` returns `None` for a missing file and raises `ValueError` for corrupt JSON. |
 
 ---
 
@@ -113,7 +115,7 @@ python3 -m pytest tests/ -v
 
 ### What the tests cover
 
-The test suite (`tests/test_pawpal.py`) contains **39 tests** across 7 test classes:
+The test suite (`tests/test_pawpal.py`) contains **53 tests** across 9 test classes:
 
 | Class | # Tests | What it verifies |
 |---|---|---|
@@ -125,6 +127,8 @@ The test suite (`tests/test_pawpal.py`) contains **39 tests** across 7 test clas
 | `TestRecurrence` | 6 | `complete()` sets `next_due` for daily/weekly tasks, `spawn_next()` produces a fresh copy, `generate_schedule()` auto-promotes recurring tasks |
 | `TestConflictDetection` | 4 | No false positives for non-overlapping tasks, same start-time flagged, overlapping window flagged, tasks with no `start_time` ignored |
 | `TestFilterTasks` | 4 | Filtering by `completed` status (True/False) and `category`, empty-list safety |
+| `TestFindNextSlot` | 6 | Earliest free slot scanning, gap detection, `end_by` boundary enforcement, `ValueError` on invalid duration |
+| `TestPersistence` | 8 | Full owner/pet/task round-trip, `next_due` date serialisation, `owner` back-link restoration, missing-file returns `None`, corrupt JSON raises `ValueError`, raw JSON structure |
 
 ### Confidence level
 

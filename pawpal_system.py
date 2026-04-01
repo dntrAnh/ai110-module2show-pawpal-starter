@@ -49,6 +49,10 @@ class Pet:
         """Add a care task to this pet's task list."""
         pass  # TODO: implement
 
+    def remove_task(self, task_name: str) -> None:
+        """Remove a task by name from this pet's task list."""
+        pass  # TODO: implement
+
     def get_tasks(self) -> List[Task]:
         """Return all tasks assigned to this pet."""
         pass  # TODO: implement
@@ -87,9 +91,15 @@ class Scheduler:
     Tasks that do not fit are collected in unscheduled_tasks.
     """
 
-    def __init__(self, pet: Pet, time_budget_minutes: int) -> None:
+    def __init__(self, pet: Pet, time_budget_minutes: Optional[int] = None) -> None:
         self.pet: Pet = pet
-        self.time_budget_minutes: int = time_budget_minutes
+        # Prefer the explicitly supplied budget; fall back to the owner's budget.
+        if time_budget_minutes is not None:
+            self.time_budget_minutes: int = time_budget_minutes
+        elif pet.owner is not None:
+            self.time_budget_minutes = pet.owner.available_time_minutes
+        else:
+            self.time_budget_minutes = 0
         self.scheduled_tasks: List[Task] = []
         self.unscheduled_tasks: List[Task] = []
 
